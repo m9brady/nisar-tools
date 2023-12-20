@@ -20,28 +20,52 @@ class NISAR(ABC):
             file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError('No such file: %s' % file_path.resolve())
-        self.granule = file_path
-        
-    @abstractmethod 
-    def load_data(self):
-        pass
-    
+        self.file_path = file_path
+        self.granule = file_path.name
+
     @abstractmethod
     def _load_meta(self):
         pass
 
-class GLSC(NISAR):
+    @abstractmethod 
+    def load_data(self):
+        pass
+    
+class RSLC(NISAR):
     '''
-    Subclass for Level-2 Focused SAR produce in geocoded coordinates (GSLC)
+    Subclass for Level-1 Focused SAR product in range/azimuth coordinates (RSLC)
     '''
-    def __init__(self, file_path):
+    def __init__(self, file_path: (str, Path)):
         super().__init__(file_path)
-        self.__meta = self._load_meta(self.granule)
+        self.__meta = self._load_meta(self.file_path)
+    
+    @property
+    def meta(self):
+        return self.__meta
+    
+    @meta.setter
+    def meta(self, *args, **kwargs):
+        LOGGER.warning('Overwriting of metadata property not permitted')
+        return
+    
+    def _load_meta(self, file_path):
+        return {}
+    
+    def load_data(self, file_path):
+        return {}
+
+class GSLC(NISAR):
+    '''
+    Subclass for Level-2 Focused SAR product in geocoded coordinates (GSLC)
+    '''
+    def __init__(self, file_path: (str, Path)):
+        super().__init__(file_path)
+        self.__meta = self._load_meta(self.file_path)
         self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
         self.crs = self._get_projection()
         self.available_polarisations = list(self.meta['calibrationInformation'].keys())
 
-    def __repr__(self):
+    def __str__(self):
         mission = self.meta['identification']['missionId'].decode('utf-8')
         instrument = self.meta['identification']['instrumentName'].decode('utf-8')
         product_type = self.meta['identification']['productType'].decode('utf-8')
@@ -62,7 +86,7 @@ class GLSC(NISAR):
         LOGGER.warning('Overwriting of metadata property not permitted')
         return
 
-    def _load_meta(self, granule):
+    def _load_meta(self, granule: (str, Path)) -> dict:
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
             attitude = {k: v[()] for k,v in ds['science/LSAR/GSLC/metadata/attitude'].items()}
@@ -95,7 +119,10 @@ class GLSC(NISAR):
             'identification': identification
         }
     
-    def load_data(self, polarisation='ALL'):
+    def load_data(self, polarisation: str='ALL') -> dict:
+        """
+        Loads the complex image array(s) from the HDF5 file as numpy array(s)
+        """
         data = {}
         with h5py.File(self.file_path, mode='r') as ds:
             # Case A: all polarisations wanted
@@ -121,14 +148,14 @@ class GLSC(NISAR):
                         raise ValueError('Cannot locate polarisation %r in file %s' % (polarisation, self.file_path.resolve()))
         return data
 
-    def _get_projection(self):
+    def _get_projection(self) -> pyproj.CRS:
         return pyproj.CRS.from_wkt(
             self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
         )
 
-    def to_geotiff(self, target_file, polarisation='HH'):
+    def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
         """
-        Convert GLSC to Amplitude GeoTIFF for fun and enjoyment
+        Convert GSLC to Amplitude GeoTIFF for fun and enjoyment
 
         This might be broken because the sample data I have doesn't seem to align with openstreetmap
         """
