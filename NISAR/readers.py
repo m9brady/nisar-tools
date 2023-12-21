@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -129,6 +129,15 @@ class RSLC(NISAR):
     
     def _get_projection(self) -> pyproj.CRS:
         return pyproj.CRS.from_epsg(self.meta['geolocation']['epsg'])
+    
+    def to_amplitude(self, polarisation: str='HH') -> np.ndarray:
+        """
+        Convert RSLC to Amplitude array for fun and enjoyment
+        """
+        # convert SLC to amplitude
+        img = self.load_data(polarisation)[polarisation]
+        # note how the img array is a structured array rather than complex dtype
+        return np.abs(img['r'], img['i'])
 
 class GSLC(NISAR):
     '''
@@ -250,8 +259,6 @@ class GSLC(NISAR):
     def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
         """
         Convert GSLC to Amplitude GeoTIFF for fun and enjoyment
-
-        This might be broken because the sample data I have doesn't seem to align with openstreetmap
         """
         if not isinstance(target_file, Path):
             target_file = Path(target_file)
