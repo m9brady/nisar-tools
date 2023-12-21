@@ -38,7 +38,21 @@ class RSLC(NISAR):
     def __init__(self, file_path: (str, Path)):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
-    
+        self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
+        self.crs = self._get_projection()
+
+    def __str__(self):
+        mission = self.meta['identification']['missionId'].decode('utf-8')
+        instrument = self.meta['identification']['instrumentName'].decode('utf-8')
+        product_type = self.meta['identification']['productType'].decode('utf-8')
+        product_version = self.meta['identification']['productVersion'].decode('utf-8')
+        abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
+        zero_doppler_start = datetime.strptime(
+            self.meta['identification']['zeroDopplerStartTime'].decode('utf-8')[:-3],
+            '%Y-%m-%dT%H:%M:%S.%f'
+        ).strftime('%Y-%m-%dT%H:%M:%S')
+        return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
+        
     @property
     def meta(self):
         return self.__meta
@@ -48,11 +62,73 @@ class RSLC(NISAR):
         LOGGER.warning('Overwriting of metadata property not permitted')
         return
     
-    def _load_meta(self, file_path):
-        return {}
+    def _load_meta(self, granule):
+        with h5py.File(granule, mode='r') as ds:
+            identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
+            attitude = {k: v[()] for k,v in ds['science/LSAR/RSLC/metadata/attitude'].items()}
+            calibration = {}
+            for k, v in ds['science/LSAR/RSLC/metadata/calibrationInformation'].items():
+                # frequencyN
+                if k.startswith('freq') and isinstance(v, h5py.Group):
+                    for pol in v:
+                        calibration[pol] = {kk: vv[()] for kk,vv in v[pol].items()}
+                elif isinstance(v, h5py.Dataset):
+                    calibration[k] = v[()]
+            orbit = {k: v[()] for k,v in ds['science/LSAR/RSLC/metadata/orbit'].items()}
+            processing = {}
+            for item, proc_meta in ds['science/LSAR/RSLC/metadata/processingInformation'].items():
+                processing[item] = {}
+                for k, v in proc_meta.items():
+                    if not isinstance(v, h5py.Group):
+                        processing[item][k] = v[()]
+                    else:
+                        processing[item][k] = {kk: vv[()] for kk, vv in v.items()}
+            geolocation = {}
+            for item, geo_meta in ds['science/LSAR/RSLC/metadata/geolocationGrid'].items():
+                if item == 'projection':
+                    geolocation[item] = {k: v for k,v in geo_meta.attrs.items()}
+                else:
+                    geolocation[item] = geo_meta[()]
+        return {
+            'attitude': attitude,
+            'calibrationInformation': calibration,
+            'orbit': orbit,
+            'processingInformation': processing,
+            'geolocation': geolocation,
+            'identification': identification
+        }
+
+    def load_data(self, polarisation: str='ALL') -> dict:
+        """
+        Loads the complex image array(s) from the HDF5 file as numpy array(s)
+        """
+        data = {}
+        with h5py.File(self.file_path, mode='r') as ds:
+            # Case A: all polarisations wanted
+            if polarisation.upper() == 'ALL':
+                for freq in self.meta['identification']['listOfFrequencies']:
+                    for pol in ds[f'science/LSAR/RSLC/metadata/calibrationInformation/frequency{freq.decode("utf-8")}']:
+                        data[pol] = ds[f'science/LSAR/RSLC/swaths/frequency{freq.decode("utf-8")}/{pol}'][()]
+            else:
+                # Case B: multiple polarisations wanted
+                if ',' in polarisation:
+                    for freq in self.meta['identification']['listOfFrequencies']:
+                        for pol in polarisation.replace(' ', '').split(','):
+                            data[pol] = ds[f'science/LSAR/RSLC/swaths/frequency{freq.decode("utf-8")}/{pol}'][()]
+                # Case C: single polarisation wanted
+                else:
+                    data[polarisation] = None
+                    for freq in self.meta['identification']['listOfFrequencies']:
+                        try:
+                            data[polarisation] = ds[f'science/LSAR/RSLC/swaths/frequency{freq.decode("utf-8")}/{polarisation}'][()]
+                        except KeyError:
+                            pass
+                    if data[polarisation] is None:
+                        raise ValueError('Cannot locate polarisation %r in file %s' % (polarisation, self.file_path.resolve()))
+        return data
     
-    def load_data(self, file_path):
-        return {}
+    def _get_projection(self) -> pyproj.CRS:
+        return pyproj.CRS.from_epsg(self.meta['geolocation']['epsg'])
 
 class GSLC(NISAR):
     '''
