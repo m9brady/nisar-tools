@@ -153,6 +153,24 @@ class GSLC(NISAR):
             self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
         )
 
+    def _load_xy_coords(self) -> (np.ndarray, np.ndarray):
+        '''
+        This is dumb because it reads in the xy arrays for each freq
+        Maybe just check for FrequencyA and be done with it
+        '''
+        with h5py.File(self.file_path, mode='r') as ds:
+            xs = None
+            ys = None
+            for freq in self.meta['identification']['listOfFrequencies']:
+                try:
+                    xs = ds[f'science/LSAR/GSLC/grids/frequency{freq.decode("utf-8")}/xCoordinates'][()]
+                    ys = ds[f'science/LSAR/GSLC/grids/frequency{freq.decode("utf-8")}/yCoordinates'][()]
+                except KeyError:
+                    pass
+        if xs is None or ys is None:
+            raise ValueError('Cannot locate image X/Y coords in file %s' % self.file_path.resolve())
+        return xs, ys
+
     def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
         """
         Convert GSLC to Amplitude GeoTIFF for fun and enjoyment
@@ -167,10 +185,9 @@ class GSLC(NISAR):
         # convert SLC to amplitude
         img = np.abs(self.load_data(polarisation)[polarisation])
         height, width = img.shape
-        # this might be the problem since xCoordinates and 
-        # yCoordinates aren't the same shape as the image array
-        xmin, xmax = np.percentile(self.meta['radar']['xCoordinates'], (0, 100))
-        ymin, ymax = np.percentile(self.meta['radar']['yCoordinates'], (0, 100))
+        xs, ys = self._load_xy_coords()
+        xmin, xmax = np.percentile(xs, (0, 100))
+        ymin, ymax = np.percentile(ys, (0, 100))
         transform = rio.transform.from_bounds(xmin, ymin, xmax, ymax, width, height)
         tiff_meta = {
             'driver': 'GTiff',
