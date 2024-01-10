@@ -161,6 +161,8 @@ cython_debug/
 
 .vscode
 scratch
+*.tif
+*.h5
 
 # NISAR reference (simulated data, ATBD docs)
 reference
