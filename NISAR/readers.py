@@ -289,3 +289,155 @@ class GSLC(NISAR):
         with rio.open(target_file, 'w', **tiff_meta) as ds:
             ds.write(img, 1)
         return target_file
+    
+class GCOV(NISAR):
+    '''
+    Subclass for Level-2 SAR covariance product in geocoded coordinates (GCOV)
+    '''
+    def __init__(self, file_path: (str, Path)):
+        super().__init__(file_path)
+        self.__meta = self._load_meta(self.file_path)
+        self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
+        self.crs = self._get_projection()
+        self.available_polarisations = list(self.meta['calibrationInformation'].keys())
+
+    def __str__(self):
+        mission = self.meta['identification']['missionId'].decode('utf-8')
+        instrument = self.meta['identification']['instrumentName'].decode('utf-8')
+        product_type = self.meta['identification']['productType'].decode('utf-8')
+        product_version = self.meta['identification']['productVersion'].decode('utf-8')
+        abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
+        zero_doppler_start = datetime.strptime(
+            self.meta['identification']['zeroDopplerStartTime'].decode('utf-8')[:-3],
+            '%Y-%m-%dT%H:%M:%S.%f'
+        ).strftime('%Y-%m-%dT%H:%M:%S')
+        return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
+
+    @property
+    def meta(self):
+        return self.__meta
+    
+    @meta.setter
+    def meta(self, *args, **kwargs):
+        LOGGER.warning('Overwriting of metadata property not permitted')
+        return
+
+    def _load_meta(self, granule: (str, Path)) -> dict:
+        with h5py.File(granule, mode='r') as ds:
+            identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
+            attitude = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/attitude'].items()}
+            calibration = {}
+            for freq in ds['science/LSAR/GCOV/metadata/calibrationInformation']:
+                for pol, pol_meta in ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}'].items():
+                    calibration[pol] = {k: v[()] for k,v in pol_meta.items()}
+            orbit = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/orbit'].items()}
+            processing = {}
+            for item, proc_meta in ds['science/LSAR/GCOV/metadata/processingInformation'].items():
+                processing[item] = {}
+                for k, v in proc_meta.items():
+                    if not isinstance(v, h5py.Group):
+                        processing[item][k] = v[()]
+                    else:
+                        processing[item][k] = {kk: vv[()] for kk, vv in v.items()}
+            radar = {}
+            for item, radar_meta in ds['science/LSAR/GCOV/metadata/radarGrid'].items():
+                if item == 'projection':
+                    radar[item] = {k: v for k,v in radar_meta.attrs.items()}
+                else:
+                    radar[item] = radar_meta[()]
+        #TODO: consider adding unit information to relevant metadata arrays (e.g. all the timedelta arrays)
+        return {
+            'attitude': attitude,
+            'calibrationInformation': calibration,
+            'orbit': orbit,
+            'processingInformation': processing,
+            'radar': radar,
+            'identification': identification
+        }
+    
+    def load_data(self, polarisation: str='ALL') -> dict:
+        """
+        Loads the complex image array(s) from the HDF5 file as numpy array(s)
+        """
+        data = {}
+        with h5py.File(self.file_path, mode='r') as ds:
+            # Case A: all polarisations wanted
+            if polarisation.upper() == 'ALL':
+                for freq in ds['science/LSAR/GCOV/grids']:
+                    for pol in self.available_polarisations:
+                        #TODO: confirm that the pol is what the sample products show (e.g. HH is actualy "HHHH")
+                        data[pol] = ds[f'science/LSAR/GCOV/grids/{freq}/{pol}{pol}'][()]
+            else:
+                # Case B: multiple polarisations wanted
+                if ',' in polarisation:
+                    for freq in ds['science/LSAR/GCOV/grids']:
+                        for pol in polarisation.replace(' ', '').split(','):
+                            data[pol] = ds[f'science/LSAR/GCOV/grids/{freq}/{pol}{pol}'][()]
+                # Case C: single polarisation wanted
+                else:
+                    data[polarisation] = None
+                    for freq in ds['science/LSAR/GCOV/grids']:
+                        try:
+                            data[polarisation] = ds[f'science/LSAR/GCOV/grids/{freq}/{polarisation}{polarisation}'][()]
+                        except KeyError:
+                            pass
+                    if data[polarisation] is None:
+                        raise ValueError('Cannot locate polarisation %r in file %s' % (polarisation, self.file_path.resolve()))
+        return data
+
+    def _get_projection(self) -> pyproj.CRS:
+        return pyproj.CRS.from_wkt(
+            self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
+        )
+
+    def _load_xy_coords(self) -> (np.ndarray, np.ndarray):
+        '''
+        This is dumb because it reads in the xy arrays for each freq
+        Maybe just check for FrequencyA and be done with it
+        '''
+        with h5py.File(self.file_path, mode='r') as ds:
+            xs = None
+            ys = None
+            for freq in self.meta['identification']['listOfFrequencies']:
+                try:
+                    xs = ds[f'science/LSAR/GCOV/grids/frequency{freq.decode("utf-8")}/xCoordinates'][()]
+                    ys = ds[f'science/LSAR/GCOV/grids/frequency{freq.decode("utf-8")}/yCoordinates'][()]
+                except KeyError:
+                    pass
+        if xs is None or ys is None:
+            raise ValueError('Cannot locate image X/Y coords in file %s' % self.file_path.resolve())
+        return xs, ys
+
+    def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
+        """
+        Convert GCOV to dB GeoTIFF for fun and enjoyment
+        """
+        if not isinstance(target_file, Path):
+            target_file = Path(target_file)
+        if target_file.exists():
+            LOGGER.warning('File exists: %r' % target_file.resolve())
+            return target_file
+        # load Gamma0 RTC and convert to dB
+        img = 10 * np.log10(self.load_data(polarisation)[polarisation])
+        height, width = img.shape
+        xs, ys = self._load_xy_coords()
+        xmin, xmax = np.percentile(xs, (0, 100))
+        ymin, ymax = np.percentile(ys, (0, 100))
+        transform = rio.transform.from_bounds(xmin, ymin, xmax, ymax, width, height)
+        tiff_meta = {
+            'driver': 'GTiff',
+            'width': width,
+            'height': height,
+            'count': 1,
+            'dtype': img.dtype,
+            'crs': self.crs,
+            'transform': transform,
+            'nodata': np.nan,
+            'compress': 'LZW',
+            'tiled': True,
+            'blockxsize': 256,
+            'blockysize': 256,
+        }
+        with rio.open(target_file, 'w', **tiff_meta) as ds:
+            ds.write(img, 1)
+        return target_file    

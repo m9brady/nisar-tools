@@ -1,6 +1,6 @@
 import logging
 
-from .readers import GSLC, RSLC
+from .readers import GSLC, RSLC, GCOV
 
 logging.basicConfig(
     format='{asctime} | {name:<15s} | {levelname:<7s} | {message}',

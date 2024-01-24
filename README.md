@@ -3,7 +3,7 @@
 Utilities for reading in simulated NISAR data products from NASA-JPL:
 https://nisar.jpl.nasa.gov/data/sample-data/
 
-Currently only has minimal support for L1 RSLC and L2 GSLC products.
+Currently only has rudimentary support for L1 RSLC and L2 GSLC/GCOV products.
 
 ### Environment setup
 
@@ -11,6 +11,9 @@ Currently only has minimal support for L1 RSLC and L2 GSLC products.
 conda create -n nisar-tools python=3 h5py rasterio pyproj shapely -c conda-forge
 conda activate nisar-tools
 ```
+
+### Usage examples
+[NISAR L2 GCOV](notebooks/gcov.ipynb)
 
 ### RSLC Example
 ```python
