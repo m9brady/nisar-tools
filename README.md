@@ -5,17 +5,22 @@ https://nisar.jpl.nasa.gov/data/sample-data/
 
 Currently only has rudimentary support for L1 RSLC and L2 GSLC/GCOV products.
 
-### Environment setup
+## Environment setup
 
 ```console
 conda create -n nisar-tools python=3 h5py rasterio pyproj shapely -c conda-forge
 conda activate nisar-tools
 ```
 
-### Usage examples
-[NISAR L2 GCOV](notebooks/gcov.ipynb)
+## Usage examples
 
-### RSLC Example
+### Notebook examples
+- [NISAR L2 GSLC](notebooks/gslc.ipynb)
+- [NISAR L2 GCOV](notebooks/gcov.ipynb)
+
+### REPL examples
+
+## RSLC
 ```python
 >>> from NISAR import RSLC
 # lazily-loaded so no data is immediately read, just metadata
@@ -40,7 +45,7 @@ dict_keys(['HH'])
 Amplitude from SLC. Shape: (30540, 6488) DType: float16
 ```
 
-### GSLC Example
+## GSLC
 ```python
 >>> from NISAR import GSLC
 # lazily-loaded so no data is immediately read, just metadata

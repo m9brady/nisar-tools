@@ -35,7 +35,7 @@ class RSLC(NISAR):
     '''
     Subclass for Level-1 Focused SAR product in range/azimuth coordinates (RSLC)
     '''
-    def __init__(self, file_path: (str, Path)):
+    def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
         self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
@@ -143,7 +143,7 @@ class GSLC(NISAR):
     '''
     Subclass for Level-2 Focused SAR product in geocoded coordinates (GSLC)
     '''
-    def __init__(self, file_path: (str, Path)):
+    def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
         self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
@@ -171,7 +171,7 @@ class GSLC(NISAR):
         LOGGER.warning('Overwriting of metadata property not permitted')
         return
 
-    def _load_meta(self, granule: (str, Path)) -> dict:
+    def _load_meta(self, granule: str | Path) -> dict:
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
             attitude = {k: v[()] for k,v in ds['science/LSAR/GSLC/metadata/attitude'].items()}
@@ -238,7 +238,7 @@ class GSLC(NISAR):
             self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
         )
 
-    def _load_xy_coords(self) -> (np.ndarray, np.ndarray):
+    def _load_xy_coords(self) -> tuple[np.ndarray, np.ndarray]:
         '''
         This is dumb because it reads in the xy arrays for each freq
         Maybe just check for FrequencyA and be done with it
@@ -256,7 +256,7 @@ class GSLC(NISAR):
             raise ValueError('Cannot locate image X/Y coords in file %s' % self.file_path.resolve())
         return xs, ys
 
-    def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
+    def to_geotiff(self, target_file: str | Path, polarisation: str='HH') -> Path:
         """
         Convert GSLC to Amplitude GeoTIFF for fun and enjoyment
         """
@@ -294,7 +294,7 @@ class GCOV(NISAR):
     '''
     Subclass for Level-2 SAR covariance product in geocoded coordinates (GCOV)
     '''
-    def __init__(self, file_path: (str, Path)):
+    def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
         self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
@@ -322,7 +322,7 @@ class GCOV(NISAR):
         LOGGER.warning('Overwriting of metadata property not permitted')
         return
 
-    def _load_meta(self, granule: (str, Path)) -> dict:
+    def _load_meta(self, granule: str | Path) -> dict:
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
             attitude = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/attitude'].items()}
@@ -390,7 +390,7 @@ class GCOV(NISAR):
             self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
         )
 
-    def _load_xy_coords(self) -> (np.ndarray, np.ndarray):
+    def _load_xy_coords(self) -> tuple[np.ndarray, np.ndarray]:
         '''
         This is dumb because it reads in the xy arrays for each freq
         Maybe just check for FrequencyA and be done with it
@@ -408,7 +408,7 @@ class GCOV(NISAR):
             raise ValueError('Cannot locate image X/Y coords in file %s' % self.file_path.resolve())
         return xs, ys
 
-    def to_geotiff(self, target_file: (str, Path), polarisation: str='HH') -> Path:
+    def to_geotiff(self, target_file: str | Path, polarisation: str='HH') -> Path:
         """
         Convert GCOV to dB GeoTIFF for fun and enjoyment
         """
