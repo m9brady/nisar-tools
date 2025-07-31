@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import h5py
+import numpy as np
 import pyproj
 import rasterio as rio
 from shapely.wkt import loads
@@ -297,20 +297,17 @@ class GCOV(NISAR):
     def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
-        self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
+        self.footprint = loads(self.meta['identification']['boundingPolygon'])
         self.crs = self._get_projection()
         self.available_polarisations = list(self.meta['calibrationInformation'].keys())
 
     def __str__(self):
-        mission = self.meta['identification']['missionId'].decode('utf-8')
-        instrument = self.meta['identification']['instrumentName'].decode('utf-8')
-        product_type = self.meta['identification']['productType'].decode('utf-8')
-        product_version = self.meta['identification']['productVersion'].decode('utf-8')
+        mission = self.meta['identification']['missionId']
+        instrument = self.meta['identification']['instrumentName']
+        product_type = self.meta['identification']['productType']
+        product_version = self.meta['identification']['productVersion']
         abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
-        zero_doppler_start = datetime.strptime(
-            self.meta['identification']['zeroDopplerStartTime'].decode('utf-8')[:-3],
-            '%Y-%m-%dT%H:%M:%S.%f'
-        ).strftime('%Y-%m-%dT%H:%M:%S')
+        zero_doppler_start = self.meta['identification']['zeroDopplerStartTime'].strftime('%Y-%m-%dT%H:%M:%S')
         return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
 
     @property
@@ -325,12 +322,32 @@ class GCOV(NISAR):
     def _load_meta(self, granule: str | Path) -> dict:
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
+            for item, ident_meta in identification.items():
+                if isinstance(ident_meta, np.bytes_):
+                    ident_meta_str = ident_meta.decode('utf-8')
+                    # boolean True/False
+                    if item.startswith('is'):
+                        identification[item] = bool(ident_meta_str)
+                    # time-aware
+                    elif item.endswith('Time'):
+                        # catch instances of 9-digit microseconds
+                        if len(ident_meta_str) > 26:
+                            parsed_date = datetime.strptime(ident_meta_str[:-3], '%Y-%m-%dT%H:%M:%S.%f')
+                        else:
+                            parsed_date = datetime.strptime(ident_meta_str, '%Y-%m-%dT%H:%M:%S.%f')
+                        identification[item] = parsed_date
+                    # otherwise, assume string stored as np.bytes
+                    else:
+                        identification[item] = ident_meta_str
             attitude = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/attitude'].items()}
             calibration = {}
             for freq in ds['science/LSAR/GCOV/metadata/calibrationInformation']:
                 for pol, pol_meta in ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}'].items():
                     calibration[pol] = {k: v[()] for k,v in pol_meta.items()}
             orbit = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/orbit'].items()}
+            for item, orbit_meta in orbit.items():
+                if isinstance(orbit_meta, np.bytes_):
+                    orbit[item] = orbit_meta.decode('utf-8')
             processing = {}
             for item, proc_meta in ds['science/LSAR/GCOV/metadata/processingInformation'].items():
                 processing[item] = {}
@@ -341,10 +358,20 @@ class GCOV(NISAR):
                         processing[item][k] = {kk: vv[()] for kk, vv in v.items()}
             radar = {}
             for item, radar_meta in ds['science/LSAR/GCOV/metadata/radarGrid'].items():
+                # the projection item has several useful CRS-related attributes
                 if item == 'projection':
-                    radar[item] = {k: v for k,v in radar_meta.attrs.items()}
+                    projection = {}
+                    for k, v in radar_meta.attrs.items():
+                        if isinstance(v, np.bytes_):
+                            projection[k] = v.decode('utf-8')
+                        else:
+                            projection[k] = v
+                    radar[item] = projection
                 else:
-                    radar[item] = radar_meta[()]
+                    if isinstance(radar_meta, np.bytes_):
+                        radar[item] = radar_meta.decode('utf-8')
+                    else:
+                        radar[item] = radar_meta[()]
         #TODO: consider adding unit information to relevant metadata arrays (e.g. all the timedelta arrays)
         return {
             'attitude': attitude,
@@ -387,7 +414,7 @@ class GCOV(NISAR):
 
     def _get_projection(self) -> pyproj.CRS:
         return pyproj.CRS.from_wkt(
-            self.meta['radar']['projection']['spatial_ref'].decode('utf-8')
+            self.meta['radar']['projection']['spatial_ref']
         )
 
     def _load_xy_coords(self) -> tuple[np.ndarray, np.ndarray]:
@@ -410,7 +437,7 @@ class GCOV(NISAR):
 
     def to_geotiff(self, target_file: str | Path, polarisation: str='HH') -> Path:
         """
-        Convert GCOV to dB GeoTIFF for fun and enjoyment
+        Convert GCOV to dB GeoTIFF (COG) for fun and enjoyment
         """
         if not isinstance(target_file, Path):
             target_file = Path(target_file)
@@ -421,9 +448,19 @@ class GCOV(NISAR):
         img = 10 * np.log10(self.load_data(polarisation)[polarisation])
         height, width = img.shape
         xs, ys = self._load_xy_coords()
-        xmin, xmax = np.percentile(xs, (0, 100))
-        ymin, ymax = np.percentile(ys, (0, 100))
-        transform = rio.transform.from_bounds(xmin, ymin, xmax, ymax, width, height)
+        xmin = xs.min()
+        ymax = ys.max()
+        xres = abs(xs[1] - xs[0])
+        yres = abs(ys[1] - ys[0])
+        # since the X and Y arrays stored in the H5 data appear to be grid-cell CENTERS,
+        # but we need the CORNERS for computing the affine transform, we get a little
+        # creative
+        transform = rio.transform.from_origin(
+            west=xmin - xres * 0.5,
+            north=ymax + yres * 0.5,
+            xsize=xres,
+            ysize=yres
+        )
         tiff_meta = {
             'driver': 'GTiff',
             'width': width,
