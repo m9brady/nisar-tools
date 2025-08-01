@@ -307,7 +307,7 @@ class GCOV(NISAR):
         product_type = self.meta['identification']['productType']
         product_version = self.meta['identification']['productVersion']
         abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
-        zero_doppler_start = self.meta['identification']['zeroDopplerStartTime'].strftime('%Y-%m-%dT%H:%M:%S')
+        zero_doppler_start = np.datetime_as_string(self.meta['identification']['zeroDopplerStartTime'])
         return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
 
     @property
@@ -320,6 +320,7 @@ class GCOV(NISAR):
         return
 
     def _load_meta(self, granule: str | Path) -> dict:
+        bool_map = {"true": True, "false": False}
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
             for item, ident_meta in identification.items():
@@ -327,35 +328,66 @@ class GCOV(NISAR):
                     ident_meta_str = ident_meta.decode('utf-8')
                     # boolean True/False
                     if item.startswith('is'):
-                        identification[item] = bool(ident_meta_str)
+                        identification[item] = bool_map.get(ident_meta_str.lower())
                     # time-aware
-                    elif item.endswith('Time'):
-                        # catch instances of 9-digit microseconds
-                        if len(ident_meta_str) > 26:
-                            parsed_date = datetime.strptime(ident_meta_str[:-3], '%Y-%m-%dT%H:%M:%S.%f')
-                        else:
-                            parsed_date = datetime.strptime(ident_meta_str, '%Y-%m-%dT%H:%M:%S.%f')
-                        identification[item] = parsed_date
+                    if 'Time' in item:
+                        identification[item] = np.datetime64(ident_meta_str)
                     # otherwise, assume string stored as np.bytes
                     else:
                         identification[item] = ident_meta_str
             attitude = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/attitude'].items()}
+            for item, attitude_meta in attitude.items():
+                if isinstance(attitude_meta, np.bytes_):
+                    attitude_meta_str = attitude_meta.decode('utf-8')
+                    attitude[item] = attitude_meta_str
             calibration = {}
-            for freq in ds['science/LSAR/GCOV/metadata/calibrationInformation']:
-                for pol, pol_meta in ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}'].items():
-                    calibration[pol] = {k: v[()] for k,v in pol_meta.items()}
+            for freq in ds['science/LSAR/GCOV/grids']:
+                for pol in ds[f'science/LSAR/GCOV/grids/{freq}/listOfPolarizations']:
+                    pol_str = pol.decode('utf-8')
+                    pol_meta = ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}/{pol_str}']
+                    calibration[pol_str] = {k: v[()] for k,v in pol_meta.items()}
+                    calibration[pol_str].update({
+                        'elevationAntennaPattern':  ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}/elevationAntennaPattern/{pol_str}'][()],
+                        'noiseEquivalentBackscatter': ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}/noiseEquivalentBackscatter/{pol_str}'][()]
+                    })
+                calibration[pol_str].update({
+                    'commonDelay': ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}/commonDelay'][()],
+                    'faradayRotation': ds[f'science/LSAR/GCOV/metadata/calibrationInformation/{freq}/faradayRotation'][()]
+                })
             orbit = {k: v[()] for k,v in ds['science/LSAR/GCOV/metadata/orbit'].items()}
             for item, orbit_meta in orbit.items():
                 if isinstance(orbit_meta, np.bytes_):
                     orbit[item] = orbit_meta.decode('utf-8')
+            # This is really ugly but I couldn't figure out h5py.Dataset.visit
             processing = {}
             for item, proc_meta in ds['science/LSAR/GCOV/metadata/processingInformation'].items():
                 processing[item] = {}
                 for k, v in proc_meta.items():
                     if not isinstance(v, h5py.Group):
-                        processing[item][k] = v[()]
+                        v_val = v[()]
+                        if isinstance(v_val, np.bytes_):
+                            v_val_str = v_val.decode('utf-8')
+                            if k.startswith('is') or k.endswith('Applied'):
+                                processing[item][k] = bool_map.get(v_val_str.lower())
+                            else:
+                                processing[item][k] = v_val_str
+                        else:
+                            processing[item][k] = v_val
                     else:
-                        processing[item][k] = {kk: vv[()] for kk, vv in v.items()}
+                        processing[item][k] = {}
+                        for kk, vv in v.items():
+                            if not isinstance(vv, h5py.Group):
+                                vv_val = vv[()]
+                                if isinstance(vv_val, np.bytes_):
+                                    vv_val_str = vv_val.decode('utf-8')
+                                    if kk.startswith('is') or kk.endswith('Applied'):
+                                        processing[item][k][kk] = bool_map.get(vv_val_str.lower())
+                                    else:
+                                        processing[item][k][kk] = vv_val_str
+                                else:
+                                    processing[item][k][kk] = vv_val
+                            else:
+                                processing[item][k][kk] = {kkk: vvv[()] for kkk, vvv in vv.items()}
             radar = {}
             for item, radar_meta in ds['science/LSAR/GCOV/metadata/radarGrid'].items():
                 # the projection item has several useful CRS-related attributes
@@ -372,6 +404,18 @@ class GCOV(NISAR):
                         radar[item] = radar_meta.decode('utf-8')
                     else:
                         radar[item] = radar_meta[()]
+            ceos_ard = {}
+            for item, ceos_meta in ds['science/LSAR/GCOV/metadata/ceosAnalysisReadyData'].items():
+                if not isinstance(ceos_meta, h5py.Group):
+                    value = ceos_meta[()]
+                    if isinstance(value, np.bytes_):
+                        ceos_ard[item] = value.decode('utf-8')
+                    else:
+                        ceos_ard[item] = value
+                else:
+                    for k, v in ceos_meta.items():
+                        ceos_ard[item] = {}
+                        ceos_ard[item][k] = {kk: vv[()] for kk, vv in v.items()}
         #TODO: consider adding unit information to relevant metadata arrays (e.g. all the timedelta arrays)
         return {
             'attitude': attitude,
@@ -379,7 +423,8 @@ class GCOV(NISAR):
             'orbit': orbit,
             'processingInformation': processing,
             'radar': radar,
-            'identification': identification
+            'identification': identification,
+            'ceosInformation': ceos_ard
         }
     
     def load_data(self, polarisation: str='ALL') -> dict:
@@ -444,7 +489,7 @@ class GCOV(NISAR):
         if target_file.exists():
             LOGGER.warning('File exists: %r' % target_file.resolve())
             return target_file
-        # load Gamma0 RTC and convert to dB
+        # load covariance data and convert to dB
         img = 10 * np.log10(self.load_data(polarisation)[polarisation])
         height, width = img.shape
         xs, ys = self._load_xy_coords()
