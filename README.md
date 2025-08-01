@@ -1,9 +1,26 @@
 # nisar-tools
 
 Utilities for reading in simulated NISAR data products from NASA-JPL:
-https://nisar.jpl.nasa.gov/data/sample-data/
+https://science.nasa.gov/mission/nisar/sample-data/
 
 Currently only has rudimentary support for L1 RSLC and L2 GSLC/GCOV products.
+
+## Product Table
+
+> Adapted from Table 2.1 in the L1/L2 ATBD. Bolded products indicate rudimentary support in this repository.
+
+| Product                                   | Level | Description                                                                                                         |
+|-------------------------------------------|-------|---------------------------------------------------------------------------------------------------------------------|
+| Radar Raw Science Telemetry (L0A) (RRST) | L0A   | This L0A product is the raw downlinked data delivered to SDS. Communication wrapping has been removed                |
+| Radar Raw Signal Data (L0B) (RRSD)        | L0B   | This L0B product is corrected, aligned radar pulse data derived from the RRST products and used for further processing. |
+| **Range Doppler Single Look Complex (RSLC)** | L1    | Focused SAR Imagery in range-Doppler coordinates.                                                                   |
+| Range Doppler Interferogram (RIFG)        | L1    | Multi-looked flattened (ellipsoid) interferogram in range-Doppler coordinates with no removal of topographic fringes. Formed using high-res offsets. |
+| Range Doppler Unwrapped Interferogram (RUNW) | L1 | Multi-looked unwrapped differential interferogram in range-Doppler coordinates with topo fringes removed.            |
+| Range Doppler pixel Offsets (ROFF)         | L1    | Raw pixel offsets layers in range and azimuth directions derived by speckle tracking with different resolutions (e.g., different chip and search window size) in range-Doppler coordinates. |
+| **Geocoded Single Look Complex (GSLC)**        | L2    | Geocoded SLC product using the MOE state vectors and a DEM.                                                        |
+| Geocoded Unwrapped Interferogram (GUNW)    | L2    | Geocoded, multi-looked unwrapped differential Interferogram.                                                      |
+| **Geocoded Polarimetric Covariance (GCOV)**    | L2    | Geocoded, multi-looked polarimetric covariance matrix.                                                             |
+| Geocoded pixel Offsets (GOFF)               | L2    | Raw pixel offsets in range and azimuth directions derived by speckle tracking with different resolutions (e.g., different chip and search window size) in geocoded coordinates. |
 
 ## Environment setup
 
@@ -82,3 +99,11 @@ complex64
 # method to convert to an amplitude geotiff for downstream applications
 >>> ds.to_geotiff('tif_data.tif')
 ```
+
+## Further Reading
+
+[ASF Tutorials for NISAR Data Manipulation](https://www.earthdata.nasa.gov/learn/tutorials/work-nisar-sample-data)
+
+[ATBD for L1/L2 NISAR Products](https://nisar.asf.earthdatacloud.nasa.gov/NISAR-SAMPLE-DATA/DOCS/NISAR_D-95677_NASA_L1_L2_ATBD_20231112_R3.4_w-sigs.pdf)
+
+[ATBD for L3 NISAR Soil Moisture Products](https://nisar.asf.earthdatacloud.nasa.gov/NISAR-SAMPLE-DATA/DOCS/NISAR_D-107679_L3SM_ATBD_R3.3_20230428_w-sigs.pdf)
