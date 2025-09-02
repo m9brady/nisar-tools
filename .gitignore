@@ -159,6 +159,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+.DS_Store
 .vscode
 scratch
 *.tif
@@ -166,3 +167,4 @@ scratch
 
 # NISAR reference (simulated data, ATBD docs)
 reference
+

@@ -38,19 +38,16 @@ class RSLC(NISAR):
     def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
-        self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
+        self.footprint = loads(self.meta['identification']['boundingPolygon'])
         self.crs = self._get_projection()
 
     def __str__(self):
-        mission = self.meta['identification']['missionId'].decode('utf-8')
-        instrument = self.meta['identification']['instrumentName'].decode('utf-8')
-        product_type = self.meta['identification']['productType'].decode('utf-8')
-        product_version = self.meta['identification']['productVersion'].decode('utf-8')
+        mission = self.meta['identification']['missionId']
+        instrument = self.meta['identification']['instrumentName']
+        product_type = self.meta['identification']['productType']
+        product_version = self.meta['identification']['productVersion']
         abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
-        zero_doppler_start = datetime.strptime(
-            self.meta['identification']['zeroDopplerStartTime'].decode('utf-8')[:-3],
-            '%Y-%m-%dT%H:%M:%S.%f'
-        ).strftime('%Y-%m-%dT%H:%M:%S')
+        zero_doppler_start = np.datetime_as_string(self.meta['identification']['zeroDopplerStartTime'])
         return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
         
     @property
@@ -63,26 +60,79 @@ class RSLC(NISAR):
         return
     
     def _load_meta(self, granule):
+        bool_map = {"true": True, "false": False}
         with h5py.File(granule, mode='r') as ds:
             identification = {k: v[()] for k,v in ds['science/LSAR/identification'].items()}
+            for item, ident_meta in identification.items():
+                if isinstance(ident_meta, np.bytes_):
+                    ident_meta_str = ident_meta.decode('utf-8')
+                    # boolean True/False
+                    if item.startswith('is'):
+                        identification[item] = bool_map.get(ident_meta_str.lower())
+                    # time-aware
+                    if 'Time' in item:
+                        identification[item] = np.datetime64(ident_meta_str)
+                    # otherwise, assume string stored as np.bytes
+                    else:
+                        identification[item] = ident_meta_str
             attitude = {k: v[()] for k,v in ds['science/LSAR/RSLC/metadata/attitude'].items()}
+            for item, attitude_meta in attitude.items():
+                if isinstance(attitude_meta, np.bytes_):
+                    attitude_meta_str = attitude_meta.decode('utf-8')
+                    attitude[item] = attitude_meta_str
             calibration = {}
+            for freq_suffix in identification['listOfFrequencies']:
+                freq = f'frequency{freq_suffix.decode("utf-8")}'
+                for pol in ds[f'science/LSAR/RSLC/swaths/{freq}/listOfPolarizations']:
+                    pol_str = pol.decode('utf-8')
+                    pol_meta = ds[f'science/LSAR/RSLC/metadata/calibrationInformation/{freq}/{pol_str}']
+                    calibration[pol_str] = {k: v[()] for k,v in pol_meta.items()}
+                    calibration[pol_str].update({
+                        'elevationAntennaPattern':  ds[f'science/LSAR/RSLC/metadata/calibrationInformation/{freq}/elevationAntennaPattern/{pol_str}'][()],
+                        'noiseEquivalentBackscatter': ds[f'science/LSAR/RSLC/metadata/calibrationInformation/{freq}/nes0/{pol_str}'][()]
+                    })
+                calibration[pol_str].update({
+                    'commonDelay': ds[f'science/LSAR/RSLC/metadata/calibrationInformation/{freq}/commonDelay'][()],
+                    'faradayRotation': ds[f'science/LSAR/RSLC/metadata/calibrationInformation/{freq}/faradayRotation'][()]
+                })
             for k, v in ds['science/LSAR/RSLC/metadata/calibrationInformation'].items():
                 # frequencyN
                 if k.startswith('freq') and isinstance(v, h5py.Group):
                     for pol in v:
-                        calibration[pol] = {kk: vv[()] for kk,vv in v[pol].items()}
+                        if isinstance(v[pol], h5py.Dataset):
+                            calibration[pol] = v[pol][()]
+                        else:
+                            calibration[pol] = {kk: vv[()] for kk,vv in v[pol].items()}
                 elif isinstance(v, h5py.Dataset):
                     calibration[k] = v[()]
             orbit = {k: v[()] for k,v in ds['science/LSAR/RSLC/metadata/orbit'].items()}
+            for item, orbit_meta in orbit.items():
+                if isinstance(orbit_meta, np.bytes_):
+                    orbit[item] = orbit_meta.decode('utf-8')
+            # This is really ugly but I couldn't figure out h5py.Dataset.visit
             processing = {}
             for item, proc_meta in ds['science/LSAR/RSLC/metadata/processingInformation'].items():
                 processing[item] = {}
                 for k, v in proc_meta.items():
                     if not isinstance(v, h5py.Group):
-                        processing[item][k] = v[()]
+                        v_val = v[()]
+                        if isinstance(v_val, np.bytes_):
+                            v_val_str = v_val.decode('utf-8')
+                            processing[item][k] = v_val_str
+                        else:
+                            processing[item][k] = v_val
                     else:
-                        processing[item][k] = {kk: vv[()] for kk, vv in v.items()}
+                        processing[item][k] = {}
+                        for kk, vv in v.items():
+                            if not isinstance(vv, h5py.Group):
+                                vv_val = vv[()]
+                                if isinstance(vv_val, np.bytes_):
+                                    vv_val_str = vv_val.decode('utf-8')
+                                    processing[item][k][kk] = vv_val_str
+                                else:
+                                    processing[item][k][kk] = vv_val
+                            else:
+                                processing[item][k][kk] = {kkk: vvv[()] for kkk, vvv in vv.items()}
             geolocation = {}
             for item, geo_meta in ds['science/LSAR/RSLC/metadata/geolocationGrid'].items():
                 if item == 'projection':
@@ -136,8 +186,8 @@ class RSLC(NISAR):
         """
         # convert SLC to amplitude
         img = self.load_data(polarisation)[polarisation]
-        # note how the img array is a structured array rather than complex dtype
-        return np.abs(img['r'], img['i'])
+        # return amplitude
+        return np.abs(img)
 
 class GSLC(NISAR):
     '''
@@ -146,20 +196,17 @@ class GSLC(NISAR):
     def __init__(self, file_path: str | Path):
         super().__init__(file_path)
         self.__meta = self._load_meta(self.file_path)
-        self.footprint = loads(self.meta['identification']['boundingPolygon'].decode('utf-8'))
+        self.footprint = loads(self.meta['identification']['boundingPolygon'])
         self.crs = self._get_projection()
         self.available_polarisations = list(self.meta['calibrationInformation'].keys())
 
     def __str__(self):
-        mission = self.meta['identification']['missionId'].decode('utf-8')
-        instrument = self.meta['identification']['instrumentName'].decode('utf-8')
-        product_type = self.meta['identification']['productType'].decode('utf-8')
-        product_version = self.meta['identification']['productVersion'].decode('utf-8')
+        mission = self.meta['identification']['missionId']
+        instrument = self.meta['identification']['instrumentName']
+        product_type = self.meta['identification']['productType']
+        product_version = self.meta['identification']['productVersion']
         abs_orbit_num = self.meta['identification']['absoluteOrbitNumber']
-        zero_doppler_start = datetime.strptime(
-            self.meta['identification']['zeroDopplerStartTime'].decode('utf-8')[:-3],
-            '%Y-%m-%dT%H:%M:%S.%f'
-        ).strftime('%Y-%m-%dT%H:%M:%S')
+        zero_doppler_start = np.datetime_as_string(self.meta['identification']['zeroDopplerStartTime'])
         return f'{mission} {instrument} {product_type} v{product_version} {zero_doppler_start} orbit #{abs_orbit_num}'
 
     @property
