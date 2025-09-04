@@ -56,11 +56,11 @@ dict_keys(['attitude', 'calibrationInformation', 'orbit', 'processingInformation
 dict_keys(['HH'])
 # it is stored as a complex64 ndarray
 >>> print(complex_array['HH'].dtype)
-dtype('complex64')
+complex64
 # method for converting complex to amplitude
 >>> amplitude_array = ds.to_amplitude()
->>> print(f'Amplitude from SLC. Shape: {amp.shape} DType: {amp.dtype}')
-Amplitude from SLC. Shape: (30540, 6488) DType: float16
+>>> print(f'Amplitude from SLC. Shape: {amplitude_array.shape} DType: {amplitude_array.dtype}')
+Amplitude from SLC. Shape: (19760, 6179) DType: float32
 ```
 
 ## GSLC
@@ -70,12 +70,12 @@ Amplitude from SLC. Shape: (30540, 6488) DType: float16
 >>> ds = GSLC('NISAR_L2_PR_GSLC_001_030_A_019_2800_SHNA_A_20081012T060911_20081012T060925_D00404_N_F_J_001.h5')
 # this is sample data so it makes sense to see the sensor it was derived from
 >>> print(ds)
-NISAR LSAR GSLC v0.1.0 2008-11-27T06:09:59 orbit #0
+ALOS PALSAR GSLC v0.0.4 2008-10-12T06:09:11.567105263 orbit #0
 >>> print(ds.meta.keys())
-dict_keys(['attitude', 'calibrationInformation', 'orbit', 'processingInformation', 'radar', 'identification'])
+dict_keys(['attitude', 'calibrationInformation', 'orbit', 'processingInformation', 'radar', 'identification', 'ceosInformation'])
 # the image footprint is also determined on read
 >>> ds.footprint
-<POLYGON Z ((-118.228 34.243 661, -118.144 34.257 661, -118.063 34.271 661, ...>
+<POLYGON Z ((-118.229 34.321 1320.763, -118.152 34.334 1120.772, -118.06 34....>
 # as well as the projection
 >>> ds.crs
 <Projected CRS: EPSG:32611>

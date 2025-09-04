@@ -147,7 +147,7 @@ class RSLC(NISAR):
             'identification': identification
         }
 
-    def load_data(self, polarisation: str='ALL') -> dict:
+    def load_data(self, polarisation: str='HH') -> dict:
         """
         Loads the complex image array(s) from the HDF5 file as numpy array(s)
         """
@@ -310,7 +310,7 @@ class GSLC(NISAR):
             'ceosInformation': ceos_ard
         }
     
-    def load_data(self, polarisation: str='ALL') -> dict:
+    def load_data(self, polarisation: str='HH') -> dict:
         """
         Loads the complex image array(s) from the HDF5 file as numpy array(s)
         """
